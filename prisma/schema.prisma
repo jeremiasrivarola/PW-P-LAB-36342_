@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client-js" // para Prisma v7 sem ESM
 }
 
 datasource db {
@@ -7,8 +7,10 @@ datasource db {
 }
 
 model Task {
-  id        Int     @id @default(autoincrement())
-  title     String
-  completed Boolean @default(false)
-  priority  String
+  id          String   @id @default(uuid()) // agora é string com UUID
+  title       String
+  description String?  // novo campo
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
