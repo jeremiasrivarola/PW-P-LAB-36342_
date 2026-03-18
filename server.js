@@ -155,6 +155,20 @@ app.delete("/tasks/:id", authenticateToken, asyncHandler(async (req, res) => {
   }
 }));
 
+// GET - Perfil do utilizador autenticado
+app.get("/auth/profile", authenticateToken, asyncHandler(async (req, res) => {
+    const userId = req.user.id;
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true }
+    });
+
+    if (!user) return res.status(404).json({ message: "Utilizador não encontrado" });
+
+    res.status(200).json({ data: user });
+}));
+
 //Signup (Registo)
 app.post("/auth/signup", async (req, res) => {
     const { name, email, password } = req.body;
