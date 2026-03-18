@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
@@ -24,9 +26,25 @@ const PORT = process.env.PORT || process.env.SERVER_PORT || 4242;
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
 
-// GET - Listar todas as tarefas (opcional filtro por completed)
-app.get("/tasks", asyncHandler(async (req, res) => {
+  if (!token) {
+    return res.status(401).json({ message: "Token não fornecido" });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: "Token inválido" });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// GET - Listar tarefas
+app.get("/tasks", authenticateToken, asyncHandler(async (req, res) => {
   const { completed } = req.query;
 
   const where = {};
@@ -42,9 +60,8 @@ app.get("/tasks", asyncHandler(async (req, res) => {
   res.status(200).json({ data: tasks });
 }));
 
-
 // GET - Buscar tarefa por ID
-app.get("/tasks/:id", asyncHandler(async (req, res) => {
+app.get("/tasks/:id", authenticateToken, asyncHandler(async (req, res) => {
   const id = req.params.id;
 
   const task = await prisma.task.findUnique({ where: { id } });
@@ -54,12 +71,10 @@ app.get("/tasks/:id", asyncHandler(async (req, res) => {
   res.status(200).json({ data: task });
 }));
 
-
 // POST - Criar tarefa
-app.post("/tasks", asyncHandler(async (req, res) => {
+app.post("/tasks", authenticateToken, asyncHandler(async (req, res) => {
   const { title, description, completed, priority } = req.body;
 
-  // validação obrigatória
   if (!title) {
     return res.status(400).json({ message: "O campo 'title' é obrigatório" });
   }
@@ -82,13 +97,11 @@ app.post("/tasks", asyncHandler(async (req, res) => {
   res.status(201).json({ data: newTask });
 }));
 
-
 // PUT - Atualizar tarefa
-app.put("/tasks/:id", asyncHandler(async (req, res) => {
+app.put("/tasks/:id", authenticateToken, asyncHandler(async (req, res) => {
   const id = req.params.id;
   const { title, description, completed, priority } = req.body;
 
-  // validação
   if (!title) {
     return res.status(400).json({ message: "O campo 'title' é obrigatório" });
   }
@@ -115,9 +128,8 @@ app.put("/tasks/:id", asyncHandler(async (req, res) => {
   }
 }));
 
-
-// PATCH - Alternar completed
-app.patch("/tasks/:id/toggle", asyncHandler(async (req, res) => {
+// PATCH - Toggle
+app.patch("/tasks/:id/toggle", authenticateToken, asyncHandler(async (req, res) => {
   const id = req.params.id;
 
   const task = await prisma.task.findUnique({ where: { id } });
@@ -131,18 +143,70 @@ app.patch("/tasks/:id/toggle", asyncHandler(async (req, res) => {
   res.status(200).json({ data: updatedTask });
 }));
 
-
-// DELETE - Eliminar tarefa
-app.delete("/tasks/:id", asyncHandler(async (req, res) => {
+// DELETE
+app.delete("/tasks/:id", authenticateToken, asyncHandler(async (req, res) => {
   const id = req.params.id;
 
   try {
     await prisma.task.delete({ where: { id } });
-    res.status(204).send(); // 204 = No Content
+    res.status(204).send();
   } catch (err) {
     res.status(404).json({ message: "Tarefa não encontrada" });
   }
 }));
+
+//Signup (Registo)
+app.post("/auth/signup", async (req, res) => {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+        return res.status(400).json({ message: "Campos 'name', 'email' e 'password' são obrigatórios" });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+        return res.status(409).json({ message: "Email já registado" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await prisma.user.create({
+        data: { name, email, password: hashedPassword },
+    });
+
+    res.status(201).json({
+        id: newUser.id,
+        name: newUser.name,
+        email: newUser.email,
+    });
+});
+
+//Signin (Login)
+app.post("/auth/signin", async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ message: "Campos 'email' e 'password' são obrigatórios" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+        return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+        return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+
+    const token = jwt.sign(
+        { id: user.id, email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: "1h" }
+    );
+
+    res.status(200).json({ token });
+});
 
 
 // 404
@@ -152,6 +216,7 @@ app.use((req, res) => {
 
 
 // Middleware global de erro
+
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: err.message || "Erro interno do servidor" });
